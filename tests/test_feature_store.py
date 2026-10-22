@@ -315,8 +315,12 @@ def test_version_comparison_reads_through_get_version(built_store, monkeypatch):
     monkeypatch.setattr(store, "get_version", lambda *a, **k: calls.append(a[:2]) or real(*a, **k))
     spec = schema.get_spec("active_month_share")
     compare_feature_versions.compare_feature(spec, built_store)
-    # every version of the feature, plus the has_ever_purchased subgroup flag, all from the store
-    assert calls == [(spec.name, v.version) for v in spec.versions] + [("has_ever_purchased", 1)]
+    # every version of the feature first, then the other stored features its analysis reads
+    # (the subgroup flag, tenure for eligibility, recency for the mover profile), all from the store
+    versions = [(spec.name, v.version) for v in spec.versions]
+    assert calls[:len(versions)] == versions
+    assert sorted(set(calls[len(versions):])) == [
+        ("days_since_last_txn", 1), ("has_ever_purchased", 1), ("tenure_days", 1), ("txn_count_90d", 1)]
 
 
 def test_lineage_has_a_separate_entry_for_every_stored_version(built_store):
@@ -344,3 +348,86 @@ def test_a_registration_failure_part_way_reports_what_was_committed(tmp_path, ca
     assert build_training_features.main(args) == 0  # the rerun skips the three and registers the rest
     assert len(registry_rows(root)) == sum(len(f.versions) for f in schema.FEATURE_SCHEMA)
     assert "tenure_days schema v1: unchanged — skipped" in capsys.readouterr().out
+
+
+def test_f7_driver_split_is_internally_consistent_and_measured(comparisons):
+    """Learner review: what drives active_month_share's 668 risers. Pins the measured split
+    and checks it adds up, so the interpretation can only quote numbers that reconcile."""
+    p = comparisons["active_month_share"]
+    dr = p["drivers"]
+    assert dr["buyers"] == 1167 and dr["never_bought_changed"] == 0
+    assert sum(c["n"] for c in dr["cells"]) == dr["buyers"]
+    assert sum(c["rose"] for c in dr["cells"]) == dr["rose"] == p["increased"] == 668
+    assert sum(c["fell"] for c in dr["cells"]) == dr["fell"] == p["decreased"] == 222
+    assert sum(c["contribution"] for c in dr["cells"]) == pytest.approx(dr["mean_change"])
+    no_no = next(c for c in dr["cells"] if not c["full"] and not c["inside"])
+    assert no_no["n"] == 0  # signing up inside the window means buying inside it
+    # by construction, risers who first bought inside the new window cannot still rise
+    assert dr["rose_first_in_new_window"] + dr["rose_earlier_first"] == dr["rose"]
+    assert dr["rose_earlier_first_still"] == dr["rose_still_from_first_purchase"]
+    # the measured result
+    assert (dr["rose_first_in_new_window"], dr["rose_earlier_first"], dr["rose_still_from_first_purchase"]) == (350, 318, 172)
+    est = dr["first_before_old_window"]
+    assert (est["n"], est["fell"], est["rose"]) == (316, 146, 106) and est["contribution"] < 0
+    assert dr["counterfactual_mean_change"] == pytest.approx(-0.0195, abs=1e-4)
+    pr = p["profile"]
+    assert (pr["entering"]["n"], pr["entering"]["no_recent"]) == (54, 26)
+    assert (pr["leaving"]["n"], pr["leaving"]["first_inside_old_window"]) == (46, 46)
+
+
+def test_f5_leavers_are_ranked_in_the_old_version(comparisons):
+    t = comparisons["avg_spend_per_active_month_6m"]["threshold"]
+    size = len(t["old"]["members"])
+    assert len(t["entering_old_ranks"]) == 25 and min(t["entering_old_ranks"]) > size
+    assert t["leaving_old_ranks"][:6] == [5, 23, 24, 33, 36, 39]
+    assert sum(r <= size // 2 for r in t["leaving_old_ranks"]) == 6
+
+
+def test_the_report_drops_the_claims_the_review_rejected(built_store):
+    results = [compare_feature_versions.compare_feature(f, built_store) for f in VERSIONED]
+    text = compare_feature_versions.render(results, built_store)
+    for rejected in ("moves only at its edge", "stops crediting a habit", "have a lower share over the shorter window",
+                     "because the long right tail is cut", "lose most of their leverage"):
+        assert rejected not in text, rejected
+    assert "6 of the 25 ranked in the upper half of v1's decile (as high as 5th)" in text
+    assert "146 of them stop rising too and 172 still rise" in text
+    assert "the whole of v2's rise in the mean comes from the eligibility rule" in text
+
+
+def _toy_f5_pair(deep_leaver_v1: float, deep_leaver_v2: float):
+    spec = schema.get_spec("avg_spend_per_active_month_6m")
+    ids = list(range(1, 22))
+    v1 = pd.Series([50.0 + 5 * i for i in range(20)] + [deep_leaver_v1], index=pd.Index(ids, name="customer_id"))
+    v2 = v1.copy()
+    v2.loc[21] = deep_leaver_v2
+    as_of = pd.Timestamp(AS_OF)
+    old = {"version": 1, "parameters": spec.versions[0].parameters, "values": v1, "as_of": as_of}
+    new = {"version": 2, "parameters": spec.versions[1].parameters, "values": v2, "as_of": as_of}
+    pair = compare_feature_versions.compare_pair(spec, old, new, store_dir=None)
+    return pair, " ".join(compare_feature_versions.interpretation(spec, pair))
+
+
+def test_the_edge_claim_follows_the_leavers_ranks():
+    """The learner's counter-example: one month of 500 and two of 10 averages 173.3 uncapped
+    and 72.4 capped, so that customer leaves from the very top of the decile."""
+    pair, text = _toy_f5_pair((500 + 10 + 10) / 3, (197.10 + 10 + 10) / 3)
+    assert pair["threshold"]["leaving_old_ranks"] == [1]
+    assert "not all at the edge" in text and "as high as 1st" in text
+    pair, text = _toy_f5_pair(141.0, 60.0)  # a leaver from the bottom of the decile instead
+    assert pair["threshold"]["leaving_old_ranks"] == [2]
+    assert "moves only at its edge" in text and "not all at the edge" not in text
+
+
+def test_the_f7_conclusions_follow_the_numbers():
+    base = {"old_lookback": 12, "new_lookback": 6, "buyers": 100, "never_bought_changed": 0, "rose": 60, "fell": 20,
+            "rose_first_in_new_window": 10, "rose_earlier_first": 50,
+            "first_before_old_window": {"n": 40, "rose": 30, "fell": 5, "contribution": 0.04},
+            "first_inside_old_window": {"n": 60, "rose": 30, "fell": 15, "contribution": 0.01}}
+    habit = " ".join(compare_feature_versions._drivers_lines(
+        {**base, "rose_still_from_first_purchase": 45, "rose_earlier_first_still": 45,
+         "mean_change": 0.05, "counterfactual_mean_change": 0.03}, "v1", "v2"))
+    assert "accounts for a minority of the risers" in habit and "comes from the eligibility rule" not in habit
+    rule = " ".join(compare_feature_versions._drivers_lines(
+        {**base, "rose_still_from_first_purchase": 5, "rose_earlier_first_still": 5,
+         "mean_change": 0.05, "counterfactual_mean_change": -0.01}, "v1", "v2"))
+    assert "the whole of v2's rise in the mean comes from the eligibility rule" in rule

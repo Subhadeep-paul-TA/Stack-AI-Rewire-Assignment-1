@@ -376,6 +376,10 @@ FEATURE_SCHEMA: list[FeatureSpec] = [
         comparison={
             "kind": "bottom_decile",
             "subgroup": {"feature": "has_ever_purchased", "value": 1},
+            # what drives the change: eligible months start at signup, first purchases come later
+            "eligibility_drivers": {"parameter": "lookback_months", "tenure_feature": "tenure_days"},
+            # an independent read on who crosses the decile, from other stored features
+            "mover_profile": {"recency_feature": "days_since_last_txn", "window_count_feature": "txn_count_90d"},
         },
     ),
 ]

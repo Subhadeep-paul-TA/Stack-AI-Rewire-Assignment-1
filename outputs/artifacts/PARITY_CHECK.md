@@ -132,4 +132,4 @@ The check found these gaps; each now has a test:
    with a 90-day purchase, 302 under six months, 250 zeros in F5, 108 zeros and 562 ones in
    F6): `test_spec_expected_feature_figures_at_2026_05_02`.
 
-Final suite: **151 tests, all passing**. The full output is in `outputs/artifacts/pytest_output.txt`.
+Final suite: **156 tests, all passing**. The full output is in `outputs/artifacts/pytest_output.txt`.

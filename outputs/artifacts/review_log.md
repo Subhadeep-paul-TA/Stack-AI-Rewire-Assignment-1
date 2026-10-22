@@ -31,4 +31,4 @@ Every finding is either fixed or left, with the reason.
 | 17 | Test isolation | The tests could have touched the real `feature_store/`. | **Guarded.** A session fixture hashes `registry.db` and `values/` before and after the run and fails if anything changed. Every store test uses `tmp_path`. |
 | 18 | Warnings | Ran the suite with `-W error`: no pandas or numpy deprecation warnings. | No issue |
 
-All findings are resolved: 3 fixed, 1 guard added and 6 left with the reasons above. Final suite: 151 passed (`outputs/artifacts/pytest_output.txt`).
+All findings are resolved: 3 fixed, 1 guard added and 6 left with the reasons above. Final suite: 156 passed (`outputs/artifacts/pytest_output.txt`).
