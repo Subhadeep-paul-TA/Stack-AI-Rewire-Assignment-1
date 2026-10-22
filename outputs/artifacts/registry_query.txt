@@ -1,0 +1,23 @@
+                    feature_name  version  is_latest                                                    parquet_path
+0             active_month_share        1          0             feature_store/values/active_month_share__v1.parquet
+1             active_month_share        2          1             feature_store/values/active_month_share__v2.parquet
+2  avg_spend_per_active_month_6m        1          0  feature_store/values/avg_spend_per_active_month_6m__v1.parquet
+3  avg_spend_per_active_month_6m        2          1  feature_store/values/avg_spend_per_active_month_6m__v2.parquet
+4            days_since_last_txn        1          1            feature_store/values/days_since_last_txn__v1.parquet
+5             has_ever_purchased        1          1             feature_store/values/has_ever_purchased__v1.parquet
+6     spend_trend_3m_vs_prior_3m        1          0     feature_store/values/spend_trend_3m_vs_prior_3m__v1.parquet
+7     spend_trend_3m_vs_prior_3m        2          1     feature_store/values/spend_trend_3m_vs_prior_3m__v2.parquet
+8                    tenure_days        1          1                    feature_store/values/tenure_days__v1.parquet
+9                  txn_count_90d        1          1                  feature_store/values/txn_count_90d__v1.parquet
+
+registry columns: ['feature_name', 'version', 'created_at', 'description', 'source_columns', 'transform_summary', 'business_rationale', 'parameters', 'parquet_path', 'is_latest']
+feature_store/values/active_month_share__v1.parquet: 1399 rows, as_of ['2026-05-02']
+feature_store/values/active_month_share__v2.parquet: 1399 rows, as_of ['2026-05-02']
+feature_store/values/avg_spend_per_active_month_6m__v1.parquet: 1399 rows, as_of ['2026-05-02']
+feature_store/values/avg_spend_per_active_month_6m__v2.parquet: 1399 rows, as_of ['2026-05-02']
+feature_store/values/days_since_last_txn__v1.parquet: 1399 rows, as_of ['2026-05-02']
+feature_store/values/has_ever_purchased__v1.parquet: 1399 rows, as_of ['2026-05-02']
+feature_store/values/spend_trend_3m_vs_prior_3m__v1.parquet: 1399 rows, as_of ['2026-05-02']
+feature_store/values/spend_trend_3m_vs_prior_3m__v2.parquet: 1399 rows, as_of ['2026-05-02']
+feature_store/values/tenure_days__v1.parquet: 1399 rows, as_of ['2026-05-02']
+feature_store/values/txn_count_90d__v1.parquet: 1399 rows, as_of ['2026-05-02']
