@@ -4,8 +4,9 @@
 
 **Stated (Assignment Doc):**
 - An e-commerce business. Retention marketing wants to target customers *before* they churn.
-- The churn label is already provided in `customers.csv`. It means **no purchase in the 90 days before the
-  as-of date, 2026-08-01**.
+- The churn label is already provided in `customers.csv`. It means **no purchase in the 90 days before
+  2026-08-01**. The Assignment Doc calls 2026-08-01 the as-of date. This file calls it the **label date**, to keep
+  it apart from the feature cutoff `as_of` (2026-05-02), which is set in `feature_spec.md`.
 - The task is to engineer features a churn model would consume, not to train the model.
 
 **Inferred from the data (not stated anywhere):**
@@ -90,7 +91,7 @@ those must come from `transactions.db`. **[High]**
 | Grain | customers: static per customer. transactions: event. monthly_agg: customer × calendar month. | [High] |
 | Coverage end | `transactions.db` runs to **2026-07-31 23:50**. The parquet runs to **2026-07-25 23:10** (ETL cutoff, §5). | [High] |
 | Partial months | A parquet row represents the **whole** calendar month. For any `as_of` that is not the first of a month, that month's row contains activity on or after `as_of`. For any `as_of` after 2026-07-26, the July 2026 row is also incomplete. | [High] |
-| Feature cutoff convention (proposed) | Features use only events with `timestamp < as_of`. Monthly rows are used only when the whole month ends before `as_of` **and** before the parquet's coverage end. | Proposal — learner to confirm |
+| Feature cutoff convention | Features use only events with `timestamp < as_of`. Monthly rows are used only when the whole month ends before `as_of` **and** before the parquet's coverage end. | Decided in feature_spec.md |
 
 ---
 
@@ -111,8 +112,8 @@ those must come from `transactions.db`. **[High]**
     A parquet-based feature would treat them as zero-activity customers. **[High]**
   - All months before July 2026 agree exactly. **[High]**
 - **Float noise.** 583 parquet `total_amount` values are not exactly 2-decimal, an artefact of float summation.
-  Any reconciliation must compare with a tolerance (≥ 0.01), not with equality. **[High]**
-- **Practical consequence (proposed):** any feature whose window can include the last ~6 days before `as_of`, or
+  A pandas group-by sum reproduces every parquet total exactly, but a different summation order can round differently, so reconciliation should still compare with a tolerance (0.01) rather than exact equality. **[High]**
+- **Practical consequence:** any feature whose window reaches 2026-07-26 or later, or
   is not aligned to calendar months, should use `transactions.db`. The parquet is only safe for whole months
   fully covered before its cutoff. **[Medium]** (this is a judgment, not a fact)
 
@@ -122,15 +123,16 @@ those must come from `transactions.db`. **[High]**
 
 - **Definition check.** "No transaction in the trailing 90 days before 2026-08-01" reproduces `churned` for
   **1,499 of 1,500** customers. **[High]**
-- **The one exception is customer 697.** Their last purchase was 2026-05-02 17:12, which is 90.3 days before the as-of date, yet
-  `churned = 0`. This is consistent with a **whole-day floor**: active if `(as_of − last_txn).days ≤ 90`. That makes
+- **The one exception is customer 697.** Their last purchase was 2026-05-02 17:12, which is 90.3 days before the
+  label date, yet `churned = 0`. This is consistent with a **whole-day floor**: active if
+  `(2026-08-01 − last_txn).days ≤ 90`. A whole-day-floor rule reproduces `churned` for all 1,500 customers. That makes
   the label window roughly `[2026-05-02, 2026-08-01)`. **[Medium]** (inferred from a single boundary case)
 - **⚠ Leakage implication.** Because the label is defined *entirely by activity in the trailing 90 days before
-  the as-of date*, any feature computed at as_of = 2026-08-01 from that same window reproduces the label almost
+  the label date*, any feature computed at as_of = 2026-08-01 from that same window reproduces the label almost
   exactly. That includes days since last transaction, transaction count over ≤ 90 days, and "any purchase in the last N ≤ 90 days".
-  Longer windows that include those 90 days leak partially. **How `as_of` is chosen for the
-  training snapshot is an open decision for `feature_spec.md`.** **[High]** that the overlap exists;
-  the resolution is the learner's call.
+  Longer windows that include those 90 days leak partially. **[High]** that the overlap exists. **Resolved in
+  `feature_spec.md`:** the training snapshot uses as_of = 2026-05-02, the start of the label window, so no
+  feature window overlaps it.
 - **The label mixes "lapsed" with "never activated".** All 81 zero-activity customers are `churned = 1`.
   **47 of them signed up within the last 90 days** and have never purchased. The label does not separate them
   from customers who bought and then stopped. **[High]** observation; **[Low]** whether that is intended.
@@ -157,6 +159,32 @@ those must come from `transactions.db`. **[High]**
 
 **Checked and *not* found:** nulls in any column of any source; duplicate transactions; zero or negative
 amounts; orphan `customer_id`s; transactions dated before the customer's `signup_date`; signups after the
-as-of date; any event on or after 2026-08-01. **[High]**
+label date; any event on or after 2026-08-01. **[High]** This does not hold at the feature cutoff: 101 customers
+signed up on or after 2026-05-02, and `feature_spec.md` excludes them from the population.
 
 ---
+
+## 8. Review record
+
+The Stage 0 version is kept at `outputs/artifacts/stage0_data_dictionary_original.md`. Changes from it:
+
+**Corrected**
+- §1, §6, §7: Stage 0 called 2026-08-01 the "as-of date". It is the label date. The feature cutoff `as_of` is
+  2026-05-02 (`feature_spec.md`). "No signups after the as-of date" holds only at 2026-08-01: 101 customers signed
+  up on or after 2026-05-02.
+- §5: "must compare with a tolerance, not with equality" overstated the evidence. A group-by sum reproduces all
+  8,086 parquet totals exactly. The tolerance stays as a guard.
+- §5: the parquet's risk is any window reaching 2026-07-26 or later, not "the last ~6 days before `as_of`".
+- §6: a whole-day-floor rule reproduces the label for all 1,500 customers.
+
+**Settled** (Stage 0's §8 rules and §9 open questions, removed from this file)
+- §8 rules: now part of `feature_spec.md` (scope and conventions, parity design, checks QC1–QC8).
+- Q1, label day-counting: whole-day floor, adopted as the spec's recency convention. [Medium]: based on one
+  boundary case.
+- Q2, never-buyers labelled churned: kept as a property of the provided label. F3 `has_ever_purchased` separates them.
+- Q3, meaning of `signup_date`: unresolved. F1 records it as an accepted limitation.
+- Q4 and Q5 (`store` channel, gross amounts, currency, region detail): unresolved. No feature depends on them.
+- Q6, the parquet after its cutoff: used only for complete months before `as_of`'s month. Check QC6 in `feature_spec.md` enforces it.
+
+**Verified against the raw data:** §2 counts, §5 source relationships and edge figures, and §6 customer 697
+(verification log §2).
